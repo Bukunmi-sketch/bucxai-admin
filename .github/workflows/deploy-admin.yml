@@ -207,20 +207,22 @@ name: Deploy Bucxai Admin to VPS
 on:
   push:
     branches:
-      - main   # change if your branch is different
+      - main
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: production # Optional: Use for secret scoping
 
     steps:
+      # Checkout the repository
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # Updated to latest version
 
       # --------------------------
-      # BACKEND (Laravel)
+      # BACKEND SETUP (Laravel)
       # --------------------------
-      - name: Set up PHP
+      - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
@@ -231,37 +233,41 @@ jobs:
         run: composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
 
       # --------------------------
-      # FRONTEND (Vite) - Build in CI
+      # FRONTEND SETUP (Vite)
       # --------------------------
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
+      - name: Setup Node.js
+        uses: actions/setup-node@v4 # Updated to latest version
         with:
           node-version: '18'
+          cache: 'npm' # Cache npm dependencies for faster builds
 
       - name: Install Node Dependencies
         run: npm ci
 
-      - name: Build Frontend
+      - name: Build Frontend Assets
         run: npm run build
 
-      - name: Archive build artifacts
+      - name: Archive Build Artifacts
         run: tar -czf build.tar.gz public/build
 
-      - name: Upload build to VPS
+      # --------------------------
+      # UPLOAD TO VPS
+      # --------------------------
+      - name: Upload Build to VPS
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
-          source: "build.tar.gz"
-          target: "/var/www/admin/bucxai-admin"
+          source: build.tar.gz
+          target: /var/www/admin/bucxai-admin
 
       # --------------------------
-      # SSH INTO VPS
+      # DEPLOY TO VPS
       # --------------------------
-      - name: Deploy on VPS
-        uses: appleboy/ssh-action@v1.0.0
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.0.3 # Updated to latest version
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
@@ -271,53 +277,65 @@ jobs:
             set -euo pipefail
             trap 'echo "❌ Deployment failed at line $LINENO"; exit 1' ERR
 
+            # Navigate to application directory
             cd /var/www/admin/bucxai-admin
 
-            echo ">>> Preserving important files..."
-            if [ -f .env ]; then cp .env /tmp/.env.backup; fi
-            if [ -d storage ]; then cp -r storage /tmp/storage.backup; fi
-            if [ -d vendor ]; then cp -r vendor /tmp/vendor.backup; fi
+            # Backup critical files
+            echo ">>> Backing up critical files..."
+            [ -f .env ] && cp .env /tmp/.env.backup
+            [ -d storage ] && cp -r storage /tmp/storage.backup
+            [ -d vendor ] && cp -r vendor /tmp/vendor.backup
+            [ -f build.tar.gz ] && cp build.tar.gz /tmp/build.tar.gz
 
-            echo ">>> Fetching latest code..."
+            # Pull latest code
+            echo ">>> Pulling latest code..."
             git fetch origin main
             git reset --hard origin/main
 
-            echo ">>> Restoring preserved files..."
-            if [ -f /tmp/.env.backup ]; then mv /tmp/.env.backup .env; fi
-            if [ -d /tmp/storage.backup ]; then rm -rf storage && mv /tmp/storage.backup storage; fi
-            if [ -d /tmp/vendor.backup ]; then rm -rf vendor && mv /tmp/vendor.backup vendor; fi
+            # Restore backed-up files
+            echo ">>> Restoring critical files..."
+            [ -f /tmp/.env.backup ] && mv /tmp/.env.backup .env
+            [ -d /tmp/storage.backup ] && rm -rf storage && mv /tmp/storage.backup storage
+            [ -d /tmp/vendor.backup ] && rm -rf vendor && mv /tmp/vendor.backup vendor
+            [ -f /tmp/build.tar.gz ] && mv /tmp/build.tar.gz build.tar.gz
 
-            echo ">>> Extracting built assets..."
+            # Extract frontend assets
+            echo ">>> Extracting frontend assets..."
             tar -xzf build.tar.gz -C public/
             rm build.tar.gz
 
-            # Ensure build folder exists
+            # Validate build folder
+            echo ">>> Validating build folder..."
             if [ ! -d public/build ]; then
               echo "❌ Build folder missing, aborting"
               exit 1
             fi
 
-            echo ">>> Checking if composer.lock changed..."
+            # Check for composer.lock changes
+            echo ">>> Checking composer.lock..."
             if git diff --name-only HEAD@{1} HEAD | grep -q "composer.lock"; then
-              echo "composer.lock changed → reinstalling dependencies"
+              echo ">>> composer.lock changed, reinstalling dependencies..."
               composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
             else
-              echo "composer.lock unchanged → skipping composer install"
+              echo ">>> composer.lock unchanged, skipping composer install"
             fi
 
+            # Set permissions
             echo ">>> Setting permissions..."
-            chown -R www-data:www-data /var/www/admin/bucxai-admin
+            chown -R www-data:www-data .
             chmod -R 755 storage bootstrap/cache
 
-            echo ">>> Clearing caches..."
+            # Clear and optimize caches
+            echo ">>> Clearing and optimizing caches..."
             php artisan config:clear || true
             php artisan cache:clear || true
             php artisan route:clear || true
             php artisan view:clear || true
             php artisan optimize || true
 
+            # Restart services
             echo ">>> Restarting services..."
             sudo systemctl reload php8.3-fpm || true
             sudo systemctl restart nginx || true
 
-            echo "✅ Deployment completed!"
+            echo "✅ Deployment completed successfully!"
