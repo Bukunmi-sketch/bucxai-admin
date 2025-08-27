@@ -315,8 +315,9 @@ jobs:
             fi
 
             echo ">>> Setting permissions..."
-            chown -R www-data:www-data .
+            sudo chown -R www-data:www-data storage bootstrap/cache
             chmod -R 755 storage bootstrap/cache
+
 
             echo ">>> Clearing and optimizing caches..."
             php artisan config:clear || true
