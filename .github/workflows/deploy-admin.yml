@@ -236,10 +236,10 @@ jobs:
       # FRONTEND SETUP (Vite)
       # --------------------------
       - name: Setup Node.js
-        uses: actions/setup-node@v4 # Updated to latest version
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
-          cache: 'npm' # Cache npm dependencies for faster builds
+          cache: 'npm'
 
       - name: Install Node Dependencies
         run: npm ci
@@ -247,8 +247,9 @@ jobs:
       - name: Build Frontend Assets
         run: npm run build
 
+      # ✅ Fixed archive step: package only `build/` at root
       - name: Archive Build Artifacts
-        run: tar -czf build.tar.gz public/build
+        run: tar -czf build.tar.gz -C public build
 
       # --------------------------
       # UPLOAD TO VPS
@@ -267,7 +268,7 @@ jobs:
       # DEPLOY TO VPS
       # --------------------------
       - name: Deploy to VPS
-        uses: appleboy/ssh-action@v1.0.3 # Updated to latest version
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
@@ -277,41 +278,34 @@ jobs:
             set -euo pipefail
             trap 'echo "❌ Deployment failed at line $LINENO"; exit 1' ERR
 
-            # Navigate to application directory
             cd /var/www/admin/bucxai-admin
 
-            # Backup critical files
             echo ">>> Backing up critical files..."
             [ -f .env ] && cp .env /tmp/.env.backup
             [ -d storage ] && cp -r storage /tmp/storage.backup
             [ -d vendor ] && cp -r vendor /tmp/vendor.backup
             [ -f build.tar.gz ] && cp build.tar.gz /tmp/build.tar.gz
 
-            # Pull latest code
             echo ">>> Pulling latest code..."
             git fetch origin main
             git reset --hard origin/main
 
-            # Restore backed-up files
             echo ">>> Restoring critical files..."
             [ -f /tmp/.env.backup ] && mv /tmp/.env.backup .env
             [ -d /tmp/storage.backup ] && rm -rf storage && mv /tmp/storage.backup storage
             [ -d /tmp/vendor.backup ] && rm -rf vendor && mv /tmp/vendor.backup vendor
             [ -f /tmp/build.tar.gz ] && mv /tmp/build.tar.gz build.tar.gz
 
-            # Extract frontend assets
             echo ">>> Extracting frontend assets..."
             tar -xzf build.tar.gz -C public/
             rm build.tar.gz
 
-            # Validate build folder
             echo ">>> Validating build folder..."
             if [ ! -d public/build ]; then
               echo "❌ Build folder missing, aborting"
               exit 1
             fi
 
-            # Check for composer.lock changes
             echo ">>> Checking composer.lock..."
             if git diff --name-only HEAD@{1} HEAD | grep -q "composer.lock"; then
               echo ">>> composer.lock changed, reinstalling dependencies..."
@@ -320,12 +314,10 @@ jobs:
               echo ">>> composer.lock unchanged, skipping composer install"
             fi
 
-            # Set permissions
             echo ">>> Setting permissions..."
             chown -R www-data:www-data .
             chmod -R 755 storage bootstrap/cache
 
-            # Clear and optimize caches
             echo ">>> Clearing and optimizing caches..."
             php artisan config:clear || true
             php artisan cache:clear || true
@@ -333,7 +325,6 @@ jobs:
             php artisan view:clear || true
             php artisan optimize || true
 
-            # Restart services
             echo ">>> Restarting services..."
             sudo systemctl reload php8.3-fpm || true
             sudo systemctl restart nginx || true
