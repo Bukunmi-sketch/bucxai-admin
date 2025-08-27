@@ -85,7 +85,7 @@ jobs:
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.2' # match your VPS version
+          php-version: '8.2'
           extensions: mbstring, bcmath, intl, pdo, mysql
           tools: composer:v2
 
@@ -93,7 +93,7 @@ jobs:
         run: composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
 
       # --------------------------
-      # FRONTEND (Vite)
+      # FRONTEND (Vite) - Build in CI
       # --------------------------
       - name: Set up Node.js
         uses: actions/setup-node@v3
@@ -106,29 +106,23 @@ jobs:
       - name: Build Frontend
         run: npm run build
 
-      # --------------------------
-      # PACKAGE & DEPLOY
-      # --------------------------
-      - name: Prepare Deployment Package
-        run: |
-          mkdir deploy
-          rsync -av --progress ./ deploy/ \
-            --exclude=node_modules \
-            --exclude=.git \
-            --exclude=.github \
-            --exclude=tests
+      - name: Archive build artifacts
+        run: tar -czf build.tar.gz public/build
 
-      - name: Upload to VPS
+      - name: Upload build to VPS
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
-          source: "deploy/*"
+          source: "build.tar.gz"
           target: "/var/www/admin/bucxai-admin"
 
-      - name: Run Deployment Commands on VPS
+      # --------------------------
+      # SSH INTO VPS
+      # --------------------------
+      - name: Deploy on VPS
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -137,11 +131,18 @@ jobs:
           port: 22
           script: |
             set -e
-
             cd /var/www/admin/bucxai-admin
 
-            echo ">>> Running composer install on server (just in case)..."
-            composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev || true
+            echo ">>> Fetching latest code..."
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo ">>> Extracting built assets..."
+            tar -xzf build.tar.gz -C public/
+            rm build.tar.gz
+
+            echo ">>> Installing PHP dependencies..."
+            composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
 
             echo ">>> Clearing caches..."
             php artisan config:clear || true
@@ -154,4 +155,4 @@ jobs:
             sudo systemctl reload php8.3-fpm || true
             sudo systemctl restart nginx || true
 
-            echo ">>> Deployment completed successfully ✅"
+            echo "✅ Deployment completed!"
