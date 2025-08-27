@@ -1,3 +1,4 @@
+
 # name: Deploy Bucxai Admin to VPS
 
 # on:
@@ -13,22 +14,50 @@
 #       - name: Checkout Code
 #         uses: actions/checkout@v3
 
+#       # --------------------------
+#       # BACKEND (Laravel)
+#       # --------------------------
 #       - name: Set up PHP
 #         uses: shivammathur/setup-php@v2
 #         with:
-#           php-version: '8.2' # match your VPS version
-#           extensions: mbstring, bcmath, intl, pdo, pgsql
+#           php-version: '8.2'
+#           extensions: mbstring, bcmath, intl, pdo, mysql
 #           tools: composer:v2
 
-#       - name: Install Dependencies
+#       - name: Install PHP Dependencies
 #         run: composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
 
-#       - name: Build Frontend Assets
-#         run: |
-#           npm ci
-#           npm run build
+#       # --------------------------
+#       # FRONTEND (Vite) - Build in CI
+#       # --------------------------
+#       - name: Set up Node.js
+#         uses: actions/setup-node@v3
+#         with:
+#           node-version: '18'
 
-#       - name: Deploy to VPS
+#       - name: Install Node Dependencies
+#         run: npm ci
+
+#       - name: Build Frontend
+#         run: npm run build
+
+#       - name: Archive build artifacts
+#         run: tar -czf build.tar.gz public/build
+
+#       - name: Upload build to VPS
+#         uses: appleboy/scp-action@v0.1.7
+#         with:
+#           host: ${{ secrets.VPS_HOST }}
+#           username: ${{ secrets.VPS_USER }}
+#           key: ${{ secrets.VPS_SSH_KEY }}
+#           port: 22
+#           source: "build.tar.gz"
+#           target: "/var/www/admin/bucxai-admin"
+
+#       # --------------------------
+#       # SSH INTO VPS
+#       # --------------------------
+#       - name: Deploy on VPS
 #         uses: appleboy/ssh-action@v1.0.0
 #         with:
 #           host: ${{ secrets.VPS_HOST }}
@@ -36,17 +65,19 @@
 #           key: ${{ secrets.VPS_SSH_KEY }}
 #           port: 22
 #           script: |
-#             set -e  # stop on first error
-
+#             set -e
 #             cd /var/www/admin/bucxai-admin
 
 #             echo ">>> Fetching latest code..."
-#             git fetch origin main || exit 1
-#             git reset --hard origin/main || exit 1
+#             git fetch origin main
+#             git reset --hard origin/main
+
+#             echo ">>> Extracting built assets..."
+#             tar -xzf build.tar.gz -C public/
+#             rm build.tar.gz
 
 #             echo ">>> Installing PHP dependencies..."
-#             composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev || exit 1
-
+#             composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
 
 #             echo ">>> Clearing caches..."
 #             php artisan config:clear || true
@@ -55,13 +86,11 @@
 #             php artisan view:clear || true
 #             php artisan optimize || true
 
-#             echo ">>> Installing Node dependencies & building..."
-#             npm ci --omit=dev || exit 1
-#             npm run build || exit 1
-
 #             echo ">>> Restarting services..."
 #             sudo systemctl reload php8.3-fpm || true
 #             sudo systemctl restart nginx || true
+
+#             echo "✅ Deployment completed!"
 
 
 name: Deploy Bucxai Admin to VPS
@@ -133,16 +162,31 @@ jobs:
             set -e
             cd /var/www/admin/bucxai-admin
 
+            echo ">>> Preserving important files..."
+            if [ -f .env ]; then cp .env /tmp/.env.backup; fi
+            if [ -d storage ]; then cp -r storage /tmp/storage.backup; fi
+            if [ -d vendor ]; then cp -r vendor /tmp/vendor.backup; fi
+
             echo ">>> Fetching latest code..."
             git fetch origin main
             git reset --hard origin/main
+
+            echo ">>> Restoring preserved files..."
+            if [ -f /tmp/.env.backup ]; then mv /tmp/.env.backup .env; fi
+            if [ -d /tmp/storage.backup ]; then rm -rf storage && mv /tmp/storage.backup storage; fi
+            if [ -d /tmp/vendor.backup ]; then rm -rf vendor && mv /tmp/vendor.backup vendor; fi
 
             echo ">>> Extracting built assets..."
             tar -xzf build.tar.gz -C public/
             rm build.tar.gz
 
-            echo ">>> Installing PHP dependencies..."
-            composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
+            echo ">>> Checking if composer.lock changed..."
+            if git diff --name-only HEAD@{1} HEAD | grep -q "composer.lock"; then
+              echo "composer.lock changed → reinstalling dependencies"
+              composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
+            else
+              echo "composer.lock unchanged → skipping composer install"
+            fi
 
             echo ">>> Clearing caches..."
             php artisan config:clear || true
