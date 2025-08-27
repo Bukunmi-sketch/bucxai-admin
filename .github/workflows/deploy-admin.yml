@@ -1,0 +1,66 @@
+name: Deploy Bucxai Admin to VPS
+
+on:
+  push:
+    branches:
+      - main   # change if your branch is different
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2' # match your VPS version
+          extensions: mbstring, bcmath, intl, pdo, pgsql
+          tools: composer:v2
+
+      - name: Install Dependencies
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
+
+      - name: Build Frontend Assets
+        run: |
+          npm ci
+          npm run build
+
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          script: |
+            set -e  # stop on first error
+
+            cd /var/www/admin
+
+            echo ">>> Fetching latest code..."
+            git fetch origin main || exit 1
+            git reset --hard origin/main || exit 1
+
+            echo ">>> Installing PHP dependencies..."
+            composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev || exit 1
+
+            echo ">>> Running migrations..."
+            php artisan migrate --force || exit 1
+
+            echo ">>> Clearing caches..."
+            php artisan config:clear || true
+            php artisan cache:clear || true
+            php artisan route:clear || true
+            php artisan view:clear || true
+            php artisan optimize || true
+
+            echo ">>> Installing Node dependencies & building..."
+            npm ci --omit=dev || exit 1
+            npm run build || exit 1
+
+            echo ">>> Restarting services..."
+            sudo systemctl reload php8.3-fpm || true
+            sudo systemctl restart nginx || true
