@@ -314,8 +314,7 @@ jobs:
               echo ">>> composer.lock unchanged, skipping composer install"
             fi
 
-            echo ">>> Setting permissions..."
-            sudo chown -R www-data:www-data storage bootstrap/cache
+            
 
 
             echo ">>> Clearing and optimizing caches..."
