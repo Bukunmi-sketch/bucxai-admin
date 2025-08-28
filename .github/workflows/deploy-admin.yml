@@ -47,8 +47,6 @@ jobs:
             echo ">>> Installing PHP dependencies..."
             composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev || exit 1
 
-            echo ">>> Running migrations..."
-            php artisan migrate --force || exit 1
 
             echo ">>> Clearing caches..."
             php artisan config:clear || true
