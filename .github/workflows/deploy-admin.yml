@@ -38,7 +38,7 @@ jobs:
           script: |
             set -e  # stop on first error
 
-            cd /var/www/admin
+            cd /var/www/admin/bucxai-admin
 
             echo ">>> Fetching latest code..."
             git fetch origin main || exit 1
